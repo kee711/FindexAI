@@ -1,19 +1,64 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AgentCard } from "@/components/agent-card";
 import { Button } from "@/components/ui/button";
-import { agents, categories, type Agent, type Category } from "@/lib/agents";
+import { categories, type Agent, type Category } from "@/lib/agents";
+import { createClient } from "@/lib/supabase/client";
 import { Sparkles } from "lucide-react";
 
 export default function AgentsPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadAgents = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("agents")
+          .select(
+            "id, name, author, description, category, price, rating_avg, rating_count, test_score, pricing_model, url",
+          );
+
+        if (error) throw new Error(error.message);
+
+        const sorted =
+          data?.sort((a, b) => {
+            const aRating = (a.rating_avg ?? 0) + (a.rating_count ?? 0) * 0.001;
+            const bRating = (b.rating_avg ?? 0) + (b.rating_count ?? 0) * 0.001;
+            if (bRating === aRating) {
+              return (a.price ?? 0) - (b.price ?? 0);
+            }
+            return bRating - aRating;
+          }) ?? [];
+
+        setAgents(
+          sorted.map((agent, index) => ({
+            ...agent,
+            rank: index + 1,
+            rating: agent.rating_avg ?? undefined,
+          })),
+        );
+      } catch (err: any) {
+        setError(err?.message ?? "Failed to load agents");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadAgents();
+  }, []);
 
   const filteredAgents = useMemo(() => {
     if (selectedCategory === "all") return agents;
     return agents.filter((agent) => agent.category === selectedCategory);
-  }, [selectedCategory]);
+  }, [agents, selectedCategory]);
 
   return (
     <main className="min-h-screen bg-white px-4 py-10 text-gray-900">
@@ -47,11 +92,19 @@ export default function AgentsPage() {
             <Sparkles className="h-4 w-4" />
             <span>{filteredAgents.length} agents</span>
           </div>
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredAgents.map((agent, index) => (
-              <AgentCard key={agent.id} agent={agent} rank={index + 1} />
-            ))}
-          </div>
+          {error ? (
+            <p className="text-sm text-red-600">Failed to load agents: {error}</p>
+          ) : loading ? (
+            <p className="text-sm text-gray-500">Loading agents...</p>
+          ) : filteredAgents.length ? (
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredAgents.map((agent, index) => (
+                <AgentCard key={agent.id} agent={agent} rank={index + 1} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">No agents found.</p>
+          )}
         </section>
       </div>
     </main>

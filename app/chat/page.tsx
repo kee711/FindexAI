@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import ReactMarkdown from "react-markdown";
 import { useEffect, useMemo, useState } from "react";
 import { AgentCard } from "@/components/agent-card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { agents, categories, type Agent, type Category } from "@/lib/agents";
-import { Send, Sparkles, Star, UserRound, Wallet } from "lucide-react";
+import { categories, type Agent, type Category } from "@/lib/agents";
+import { Loader2, Send, Sparkles, Star, UserRound, Wallet } from "lucide-react";
 
 type ChatMessage = {
   id: string;
@@ -24,17 +25,31 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasInitialResponse, setHasInitialResponse] = useState(false);
   const [agentModal, setAgentModal] = useState<Agent | null>(null);
+  const [searchResults, setSearchResults] = useState<Agent[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [executing, setExecuting] = useState(false);
+  const [lastQuery, setLastQuery] = useState("");
 
   const recommendedAgents = useMemo(() => {
-    const filtered = agents.filter((agent) => agent.category === selectedCategory);
-    const list = filtered.length ? filtered : agents;
-    return [...list].sort((a, b) => {
-      if (b.score === a.score) {
-        return a.price - b.price;
+    const filtered = searchResults.filter((agent) =>
+      selectedCategory ? agent.category === selectedCategory : true,
+    );
+    const scoredAgents = filtered.length ? filtered : searchResults;
+
+    const sorted = [...scoredAgents].sort((a, b) => {
+      const aScore = a.fitness_score ?? a.score ?? a.similarity ?? 0;
+      const bScore = b.fitness_score ?? b.score ?? b.similarity ?? 0;
+      if (bScore === aScore) {
+        const aPrice = a.price ?? 0;
+        const bPrice = b.price ?? 0;
+        return aPrice - bPrice;
       }
-      return b.score - a.score;
+      return bScore - aScore;
     });
-  }, [selectedCategory]);
+
+    return sorted.map((agent, index) => ({ ...agent, rank: agent.rank ?? index + 1 }));
+  }, [searchResults, selectedCategory]);
 
   useEffect(() => {
     if (view === "chat" && !selectedAgentId && recommendedAgents[0]) {
@@ -42,32 +57,21 @@ export default function ChatPage() {
     }
   }, [view, recommendedAgents, selectedAgentId]);
 
-  const primaryAgent =
-    recommendedAgents.find((agent) => agent.id === selectedAgentId) ??
-    recommendedAgents[0] ??
-    agents[0];
+  const primaryAgent = recommendedAgents.find((agent) => agent.id === selectedAgentId);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const text = prompt.trim();
     if (!text) return;
 
     const now = Date.now();
-    const baseAgent = primaryAgent ?? recommendedAgents[0];
-    const intro =
-      "Understood. I'll recommend a suitable agent based on vetted runs for similar tasks.";
     const follow =
-      baseAgent && view === "landing"
-        ? `The most suitable agent right now is ${baseAgent.name}. You can also pick another from the right-hand Recommended List.`
-        : "Updating the recommendation list based on your latest note.";
+      view === "landing"
+        ? "Searching for the best-fitting agents now."
+        : "Refreshing the recommendations based on your latest note.";
 
     setMessages((prev) => [
       ...prev,
       { id: `user-${now}`, from: "user", text },
-      {
-        id: `ai-${now}-intro`,
-        from: "ai",
-        text: !hasInitialResponse ? intro : "Got it. Let me adjust the match.",
-      },
       {
         id: `ai-${now}-follow`,
         from: "ai",
@@ -78,9 +82,134 @@ export default function ChatPage() {
     setHasInitialResponse(true);
     setView("chat");
     setPrompt("");
+    setLastQuery(text);
 
-    if (!selectedAgentId && baseAgent) {
-      setSelectedAgentId(baseAgent.id);
+    await runSearch(text);
+  };
+
+  const runSearch = async (queryText: string) => {
+    setSearching(true);
+    setSearchError(null);
+
+    try {
+      const response = await fetch("/api/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: queryText,
+          topK: 10,
+          matchThreshold: 0.35,
+          category: selectedCategory,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Search failed");
+      }
+
+      const payload = await response.json();
+      if (!payload?.ok) {
+        throw new Error(payload?.error ?? "Search failed");
+      }
+
+      if (payload?.mode === "chat") {
+        const aiMessage = payload?.message ?? "I can help with that.";
+        setSearchResults([]);
+        setMessages((prev) => [
+          ...prev,
+          { id: `chat-${Date.now()}`, from: "ai", text: aiMessage },
+        ]);
+        return;
+      }
+
+      const results: Agent[] =
+        payload?.results?.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          author: item.author ?? "Unknown",
+          description: item.description ?? "",
+          price: item.price ?? 0,
+          rating_avg: item.rating_avg ?? null,
+          rating_count: item.rating_count ?? 0,
+          category: item.category ?? selectedCategory,
+          fitness_score: item.fitness_score ?? 0,
+          similarity: item.similarity ?? 0,
+          score: item.fitness_score ?? 0,
+          rank: item.rank,
+          pricing_model: item.pricing_model ?? "",
+          url: item.url ?? "",
+          test_score: item.test_score ?? null,
+          rationale: item.rationale ?? "",
+        })) ?? [];
+
+      setSearchResults(results);
+
+      if (results[0]) {
+        setSelectedAgentId(results[0].id);
+        if (payload?.message) {
+          setMessages((prev) => [
+            ...prev,
+            { id: `chat-${Date.now()}`, from: "ai", text: payload.message },
+          ]);
+        }
+      } else if (payload?.message) {
+        setMessages((prev) => [
+          ...prev,
+          { id: `chat-${Date.now()}`, from: "ai", text: payload.message },
+        ]);
+      }
+    } catch (error: any) {
+      console.error(error);
+      setSearchResults([]);
+      setSearchError(error?.message ?? "Failed to search");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const executeAgent = async () => {
+    if (!selectedAgentId) return;
+    setExecuting(true);
+    try {
+      const response = await fetch("/api/execute", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          agentId: selectedAgentId,
+          query: lastQuery,
+        }),
+      });
+
+      const payload = await response.json();
+      const success = response.ok && payload?.ok;
+      const text = success
+        ? `Executing agent "${payload?.agent?.name ?? selectedAgentId}" with your latest request.`
+        : `Failed to execute agent: ${payload?.error ?? "unknown error"}`;
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `exec-${Date.now()}`,
+          from: "ai",
+          text,
+        },
+      ]);
+    } catch (error: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `exec-${Date.now()}`,
+          from: "ai",
+          text: `Failed to execute agent: ${error?.message ?? "unknown error"}`,
+        },
+      ]);
+    } finally {
+      setExecuting(false);
     }
   };
 
@@ -104,14 +233,18 @@ export default function ChatPage() {
             prompt={prompt}
             onPromptChange={setPrompt}
             onSend={handleSend}
-            messages={messages}
-            selectedCategory={selectedCategory}
-            recommendedAgents={recommendedAgents}
-            selectedAgent={primaryAgent}
-            onSelectAgent={setSelectedAgentId}
-            onOpenAgent={(agent) => setAgentModal(agent)}
-          />
-        )}
+          messages={messages}
+          selectedCategory={selectedCategory}
+          recommendedAgents={recommendedAgents}
+          selectedAgent={primaryAgent}
+          onSelectAgent={setSelectedAgentId}
+          onOpenAgent={(agent) => setAgentModal(agent)}
+          onConfirm={executeAgent}
+          searching={searching}
+          searchError={searchError}
+          executing={executing}
+        />
+      )}
       </div>
 
       {agentModal ? (
@@ -170,7 +303,7 @@ function LandingView({
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
-  onSend: () => void;
+  onSend: () => void | Promise<void>;
   selectedCategory: string;
   onCategoryChange: (value: string) => void;
   recommendedAgents: Agent[];
@@ -205,16 +338,20 @@ function LandingView({
             Vetted by AI with recorded runs and pricing signals.
           </span>
         </div>
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {recommendedAgents.slice(0, 4).map((agent, index) => (
-            <AgentCard
-              key={agent.id}
-              agent={agent}
-              rank={index + 1}
-              onOpen={() => onOpenAgent(agent)}
-            />
-          ))}
-        </div>
+        {recommendedAgents.length ? (
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            {recommendedAgents.slice(0, 4).map((agent, index) => (
+              <AgentCard
+                key={agent.id}
+                agent={agent}
+                rank={index + 1}
+                onOpen={() => onOpenAgent(agent)}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">Run a search to see agent results here.</p>
+        )}
       </div>
     </section>
   );
@@ -230,16 +367,24 @@ function ChatView({
   selectedAgent,
   onSelectAgent,
   onOpenAgent,
+  onConfirm,
+  searching,
+  searchError,
+  executing,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
-  onSend: () => void;
+  onSend: () => void | Promise<void>;
   messages: ChatMessage[];
   selectedCategory: string;
   recommendedAgents: Agent[];
   selectedAgent: Agent | undefined;
   onSelectAgent: (id: string) => void;
   onOpenAgent: (agent: Agent) => void;
+  onConfirm: () => void;
+  searching: boolean;
+  searchError: string | null;
+  executing: boolean;
 }) {
   return (
     <section className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
@@ -264,13 +409,32 @@ function ChatView({
           ))}
 
           {selectedAgent && (
-            <div className="flex justify-start">
+            <div className="flex flex-col items-start gap-3">
               <AgentCard
                 agent={selectedAgent}
                 highlight
                 note="However, you may select another agent from the right-hand section to work with."
                 onOpen={() => onOpenAgent(selectedAgent)}
               />
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  onClick={onConfirm}
+                  disabled={executing}
+                  className="rounded-full bg-black px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-black/90"
+                >
+                  {executing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Executing...
+                    </>
+                  ) : (
+                    "Confirm & Execute (Enter on button)"
+                  )}
+                </Button>
+                <span className="text-xs text-gray-500">
+                  Selected agent card sits under the chat bubble. Press Enter on this button or click confirm to call /execute.
+                </span>
+              </div>
             </div>
           )}
         </div>
@@ -287,21 +451,40 @@ function ChatView({
       <aside className="rounded-3xl bg-gray-50 p-5 shadow-sm">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-xl font-semibold">Recommended List</h3>
-          <span className="text-xs text-gray-500">Ranked by score & price</span>
+          <span className="flex items-center gap-2 text-xs text-gray-500">
+            {searching ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Searching...
+              </>
+            ) : (
+              "Ranked by score & price"
+            )}
+          </span>
         </div>
-        <div className="flex flex-col gap-4">
-          {recommendedAgents.map((agent, index) => (
-            <AgentCard
-              key={agent.id}
-              agent={agent}
-              compact
-              rank={index + 1}
-              active={selectedAgent?.id === agent.id}
-              onSelect={() => onSelectAgent(agent.id)}
-              onOpen={() => onOpenAgent(agent)}
-            />
-          ))}
-        </div>
+        {searchError ? (
+          <p className="mb-3 text-xs text-red-600">
+            Search error: {searchError}
+          </p>
+        ) : null}
+        {recommendedAgents.length ? (
+          <div className="flex flex-col gap-4">
+            {recommendedAgents.map((agent, index) => (
+              <AgentCard
+                key={agent.id}
+                agent={agent}
+                compact
+                rank={index + 1}
+                active={selectedAgent?.id === agent.id}
+                onOpen={() => onOpenAgent(agent)}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">
+            No agents yet. Submit a prompt to search.
+          </p>
+        )}
       </aside>
     </section>
   );
@@ -316,7 +499,7 @@ function PromptComposer({
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
-  onSend: () => void;
+  onSend: () => void | Promise<void>;
   placeholder: string;
   minimal?: boolean;
 }) {
@@ -399,7 +582,13 @@ function ChatBubble({
         alignClass,
       )}
     >
-      {children}
+      {typeof children === "string" ? (
+        <div className="prose prose-sm max-w-none text-gray-800 prose-p:my-1 prose-li:my-0 prose-code:rounded prose-code:bg-gray-200 prose-code:px-1 prose-code:py-0.5">
+          <ReactMarkdown>{children}</ReactMarkdown>
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }
@@ -414,6 +603,8 @@ function AgentModal({
   onUseAgent: () => void;
 }) {
   const [tab, setTab] = useState<"about" | "example" | "reviews">("about");
+  const priceValue = agent.price ?? 0;
+  const ratingValue = agent.rating_avg ?? agent.rating ?? 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-10">
@@ -439,11 +630,11 @@ function AgentModal({
             <div className="flex items-center gap-3 text-sm font-semibold text-gray-800">
               <div className="flex items-center gap-1">
                 <Wallet className="h-4 w-4" />
-                <span>{agent.price.toFixed(3)}</span>
+                <span>{priceValue.toFixed(3)}</span>
               </div>
               <div className="flex items-center gap-1">
                 <Star className="h-4 w-4" />
-                <span>{agent.rating.toFixed(1)}</span>
+                <span>{ratingValue.toFixed(1)}</span>
               </div>
             </div>
           </div>
@@ -470,7 +661,7 @@ function AgentModal({
             {tab === "about" && (
               <div className="space-y-2">
                 <p className="text-base font-semibold text-gray-900">About this Agent</p>
-                <p className="text-gray-800">{agent.description}</p>
+                <p className="text-gray-800">{agent.description ?? "No description yet."}</p>
               </div>
             )}
 
