@@ -1,109 +1,82 @@
-<a href="https://demo-nextjs-with-supabase.vercel.app/">
-  <img alt="Next.js and Supabase Starter Kit - the fastest way to build apps with Next.js and Supabase" src="https://demo-nextjs-with-supabase.vercel.app/opengraph-image.png">
-  <h1 align="center">Next.js and Supabase Starter Kit</h1>
-</a>
+# FindexAI — Agent Marketplace for x402 Micro-Payments
 
-<p align="center">
- The fastest way to build apps with Next.js and Supabase
-</p>
+FindexAI is a next-gen marketplace that replaces freelancer gigs with AI agents. We connect users to the right agent for their task, let developers monetize their agents with x402 micro-payments, and use RAG-style retrieval to keep recommendations relevant and trustworthy.
 
-<p align="center">
-  <a href="#features"><strong>Features</strong></a> ·
-  <a href="#demo"><strong>Demo</strong></a> ·
-  <a href="#deploy-to-vercel"><strong>Deploy to Vercel</strong></a> ·
-  <a href="#clone-and-run-locally"><strong>Clone and run locally</strong></a> ·
-  <a href="#feedback-and-issues"><strong>Feedback and issues</strong></a>
-  <a href="#more-supabase-examples"><strong>More Examples</strong></a>
-</p>
-<br/>
+## Why This Matters
 
-## Features
+- Freelancer pricing is high for tasks AI can already do faster and cheaper. Users need a way to find the right agent instantly, not a human gig.
+- Agent builders lack a fair monetization path; even lightweight agents rarely get paid in existing ecosystems.
+- “One-size-fits-all” bots miss personalization, and high subscription fees block casual use.
 
-- Works across the entire [Next.js](https://nextjs.org) stack
-  - App Router
-  - Pages Router
-  - Proxy
-  - Client
-  - Server
-  - It just works!
-- supabase-ssr. A package to configure Supabase Auth to use cookies
-- Password-based authentication block installed via the [Supabase UI Library](https://supabase.com/ui/docs/nextjs/password-based-auth)
-- Styling with [Tailwind CSS](https://tailwindcss.com)
-- Components with [shadcn/ui](https://ui.shadcn.com/)
-- Optional deployment with [Supabase Vercel Integration and Vercel deploy](#deploy-your-own)
-  - Environment variables automatically assigned to Vercel project
+## Our Solution
 
-## Demo
+- **M2M matching, low cost:** We route each request to the most suitable agent and execute quickly at micro-payment scale.
+- **x402-powered earnings:** Agent developers publish agents and get paid per use—no heavy subscriptions required for users.
+- **RAG-backed relevance:** We retrieve and rank agents using their verified results and evaluations to keep recommendations grounded.
 
-You can view a fully working demo at [demo-nextjs-with-supabase.vercel.app](https://demo-nextjs-with-supabase.vercel.app/).
+## Key Capabilities
 
-## Deploy to Vercel
+- Precise agent search and recommendation tuned for user intent.
+- Instant, low-fee P2P payments via x402 for each agent run.
+- Quality signals and reviews to surface better agents over time.
+- Execution + review loop so users can run an agent and immediately rate the outcome.
 
-Vercel deployment will guide you through creating a Supabase account and project.
+## Demo Flow
 
-After installation of the Supabase integration, all relevant environment variables will be assigned to the project so the deployment is fully functioning.
+1) User describes a task (“find a research agent”, “make slides”, etc.).  
+2) We retrieve and rank agents based on prior results, ratings, and price expectations.  
+3) User selects an agent, pays via x402 micro-payment, and receives the result.  
+4) User rates the run; high-quality agents rise, improving future recommendations.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel%2Fnext.js%2Ftree%2Fcanary%2Fexamples%2Fwith-supabase&project-name=nextjs-with-supabase&repository-name=nextjs-with-supabase&demo-title=nextjs-with-supabase&demo-description=This+starter+configures+Supabase+Auth+to+use+cookies%2C+making+the+user%27s+session+available+throughout+the+entire+Next.js+app+-+Client+Components%2C+Server+Components%2C+Route+Handlers%2C+Server+Actions+and+Middleware.&demo-url=https%3A%2F%2Fdemo-nextjs-with-supabase.vercel.app%2F&external-id=https%3A%2F%2Fgithub.com%2Fvercel%2Fnext.js%2Ftree%2Fcanary%2Fexamples%2Fwith-supabase&demo-image=https%3A%2F%2Fdemo-nextjs-with-supabase.vercel.app%2Fopengraph-image.png)
+## Outcomes
 
-The above will also clone the Starter kit to your GitHub, you can clone that locally and develop locally.
+- **Independent SaaS feel, P2P economics:** Directly connects agent publishers and buyers with a seamless UX.  
+- **Higher-quality agents:** Competitive ranking and feedback loops push better agents to the top.  
+- **Towards full M2M:** As agents improve, tasks can be fully outsourced to the best-fit agent with minimal human intervention.
 
-If you wish to just develop locally and not deploy to Vercel, [follow the steps below](#clone-and-run-locally).
+## Quick Start (local)
 
-## Clone and run locally
-
-1. You'll first need a Supabase project which can be made [via the Supabase dashboard](https://database.new)
-
-2. Create a Next.js app using the Supabase Starter template npx command
-
+1) Set required environment variables in `.env.local` (API keys, x402 credentials, etc.).  
+2) Install dependencies and run the dev server:  
    ```bash
-   npx create-next-app --example with-supabase with-supabase-app
-   ```
-
-   ```bash
-   yarn create next-app --example with-supabase with-supabase-app
-   ```
-
-   ```bash
-   pnpm create next-app --example with-supabase with-supabase-app
-   ```
-
-3. Use `cd` to change into the app's directory
-
-   ```bash
-   cd with-supabase-app
-   ```
-
-4. Rename `.env.example` to `.env.local` and update the following:
-
-  ```env
-  NEXT_PUBLIC_SUPABASE_URL=[INSERT SUPABASE PROJECT URL]
-  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=[INSERT SUPABASE PROJECT API PUBLISHABLE OR ANON KEY]
-  ```
-  > [!NOTE]
-  > This example uses `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, which refers to Supabase's new **publishable** key format.
-  > Both legacy **anon** keys and new **publishable** keys can be used with this variable name during the transition period. Supabase's dashboard may show `NEXT_PUBLIC_SUPABASE_ANON_KEY`; its value can be used in this example.
-  > See the [full announcement](https://github.com/orgs/supabase/discussions/29260) for more information.
-
-  Both `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` can be found in [your Supabase project's API settings](https://supabase.com/dashboard/project/_?showConnect=true)
-
-5. You can now run the Next.js local development server:
-
-   ```bash
+   npm install
    npm run dev
-   ```
+   ```  
+3) Open the app and search for an agent to see the recommendation and execution flow.
 
-   The starter kit should now be running on [localhost:3000](http://localhost:3000/).
+## Environment
 
-6. This template comes with the default shadcn/ui style initialized. If you instead want other ui.shadcn styles, delete `components.json` and [re-install shadcn/ui](https://ui.shadcn.com/docs/installation/next)
+Set these in `.env.local`:
+```
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
+OPENAI_API_KEY=...
+NEXT_PUBLIC_CDP_PROJECT_ID=...
+CDP_API_KEY_ID=...
+CDP_API_KEY_SECRET=...
+BASE_SEPOLIA_RPC_URL=...
+BASE_SEPOLIA_USDC_ADDRESS=...
+```
+Keep secrets out of version control; rotate keys if exposed.
 
-> Check out [the docs for Local Development](https://supabase.com/docs/guides/getting-started/local-development) to also run Supabase locally.
+## Notes for Contributors
 
-## Feedback and issues
+- Keep documentation and marketing aligned with the agent marketplace, x402 micro-payments, and RAG-backed recommendations.  
+- Avoid reintroducing generic starter text or unrelated deployment boilerplate.  
+- When adding agents, ensure they include evaluable outputs so ranking stays trustworthy.***
 
-Please file feedback and issues over on the [Supabase GitHub org](https://github.com/supabase/supabase/issues/new/choose).
+## Contributing
 
-## More Supabase examples
+- Open a small scoped PR; include context on the agent or flow you’re changing.  
+- Add logging when touching ranking, payments, or execution paths; keep sensitive values out of logs.  
+- For UI, maintain IME-safe inputs and avoid patterns that trigger duplicate sends.  
+- Run lint/tests if added; note in PR if not run.  
+- Keep README and PR.md aligned with feature work; remove stale instructions.
 
-- [Next.js Subscription Payments Starter](https://github.com/vercel/nextjs-subscription-payments)
-- [Cookie-based Auth and the Next.js 13 App Router (free course)](https://youtube.com/playlist?list=PL5S4mPUpp4OtMhpnp93EFSo42iQ40XjbF)
-- [Supabase Auth and the Next.js App Router](https://github.com/supabase/supabase/tree/master/examples/auth/nextjs)
+## Roadmap
+
+- Expand agent evaluations: richer quality signals, automated test runs, and verified outputs.  
+- Strengthen payments: more x402 flows, retries, and clear user receipts.  
+- Better retrieval: multilingual RAG, synonym/intent expansion for matching.  
+- Agent marketplace UX: richer agent profiles, versioning, and trust badges.  
+- Full M2M: allow agents to chain/compose for complex tasks with minimal human input.
