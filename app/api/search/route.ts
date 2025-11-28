@@ -236,11 +236,12 @@ export async function POST(request: Request) {
     // Fallback: if no vector matches, relax threshold to 0 to still surface closest agents.
     if (!matchedIds.length) {
       console.log("[search] no matches at threshold; retrying with threshold 0");
-      const { data: relaxedMatches, error: relaxedError } = await supabase.rpc("match_agents", {
+      const { data: relaxedData, error: relaxedError } = await supabase.rpc("match_agents", {
         query_embedding: queryEmbedding,
         match_threshold: 0,
         match_count: rpcTopK,
       });
+      const relaxedMatches: MatchRow[] = Array.isArray(relaxedData) ? relaxedData : [];
       console.log("[search] relaxed match_agents response", {
         relaxedError,
         relaxedCount: relaxedMatches?.length,
@@ -248,7 +249,7 @@ export async function POST(request: Request) {
       });
       if (!relaxedError && relaxedMatches?.length) {
         matchRows.splice(0, matchRows.length, ...relaxedMatches);
-        matchedIds = relaxedMatches.map((row) => row.agent_id);
+        matchedIds = relaxedMatches.map((row: MatchRow) => row.agent_id);
         console.log("[search] matched ids after relax", matchedIds);
       }
     }
