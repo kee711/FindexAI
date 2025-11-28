@@ -1420,11 +1420,8 @@ function PromptComposer({
           value={prompt}
           onChange={(e) => handleChange(e.target.value, e.target)}
           onKeyDown={(e) => {
-            // 한글 입력 등 IME 조합 중이면 전송하지 않기
-            // (React 18 기준으로 e.nativeEvent.isComposing 지원)
-            // @ts-ignore 타입 이슈 있으면 무시하거나 선언 보강
-            if ((e.nativeEvent as any).isComposing) return;
-
+            // Avoid sending while IME composition is active (e.g., Korean input)
+            if (e.nativeEvent.isComposing) return;
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               onSend();

@@ -95,6 +95,7 @@ No suitable agent was found. Suggest quick, concrete steps the user can try with
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    console.log("[search] raw body", body);
     const query = (body?.query ?? "").toString().trim();
     if (!query) {
       return NextResponse.json(
@@ -109,12 +110,15 @@ export async function POST(request: Request) {
       0,
       1
     );
-    const priceMax =
-      body?.priceMax != null
-        ? toNumber(body.priceMax, DEFAULT_PRICE_ANCHOR)
-        : null;
-    const category = body?.category ? String(body.category).trim() : null;
+    const priceMax = body?.priceMax != null ? toNumber(body.priceMax, DEFAULT_PRICE_ANCHOR) : null;
     const priceAnchor = priceMax ?? DEFAULT_PRICE_ANCHOR;
+    console.log("[search] parsed params", {
+      query,
+      topK,
+      matchThreshold,
+      priceMax,
+      priceAnchor,
+    });
 
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
@@ -124,6 +128,7 @@ export async function POST(request: Request) {
     }
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    console.log("[search] calling OpenAI for tool decision");
 
     const toolCallDecision = await openai.chat.completions.create({
       model: "gpt-4.1",
@@ -131,9 +136,7 @@ export async function POST(request: Request) {
         { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `User request: """${query}"""\nCategory hint: ${
-            category ?? "none"
-          }`,
+          content: `User request: """${query}"""`,
         },
       ],
       tools: [
@@ -146,19 +149,8 @@ export async function POST(request: Request) {
             parameters: {
               type: "object",
               properties: {
-                topK: {
-                  type: "integer",
-                  minimum: 1,
-                  maximum: MAX_TOP_K,
-                  default: topK,
-                },
-                matchThreshold: {
-                  type: "number",
-                  minimum: 0,
-                  maximum: 1,
-                  default: matchThreshold,
-                },
-                category: { type: "string", nullable: true },
+                topK: { type: "integer", minimum: 1, maximum: MAX_TOP_K, default: topK },
+                matchThreshold: { type: "number", minimum: 0, maximum: 1, default: matchThreshold },
                 priceMax: { type: "number", nullable: true },
               },
             },
@@ -170,6 +162,10 @@ export async function POST(request: Request) {
 
     const firstMessage = toolCallDecision.choices[0]?.message;
     const toolCalls = firstMessage?.tool_calls ?? [];
+    console.log("[search] tool decision", {
+      toolCalls,
+      firstMessageContent: firstMessage?.content,
+    });
 
     type FunctionToolCall = Extract<
       (typeof toolCalls)[number],
@@ -194,10 +190,14 @@ export async function POST(request: Request) {
     }
 
     // Tool call path: perform embedding + match_agents RPC.
+    console.log("[search] proceeding with tool call");
     const [supabase, queryEmbedding] = await Promise.all([
       createClient(),
       embedText(query),
     ]);
+    console.log("[search] embedding + supabase ready", {
+      embeddingLength: queryEmbedding?.length,
+    });
 
     const functionCall = toolCalls.find(isFunctionToolCall);
     const toolArgs = functionCall?.function?.arguments
@@ -210,21 +210,29 @@ export async function POST(request: Request) {
       0,
       1
     );
-    const rpcCategory = toolArgs?.category ?? category;
     const rpcPriceMax =
       toolArgs?.priceMax != null
         ? toNumber(toolArgs.priceMax, priceAnchor)
         : priceMax;
     const rpcPriceAnchor = rpcPriceMax ?? priceAnchor;
+    console.log("[search] rpc params", {
+      rpcTopK,
+      rpcMatchThreshold,
+      rpcPriceMax,
+      rpcPriceAnchor,
+      rawToolArgs: toolArgs,
+    });
 
-    const { data: matches, error: matchError } = await supabase.rpc(
-      "match_agents",
-      {
-        query_embedding: queryEmbedding,
-        match_threshold: rpcMatchThreshold,
-        match_count: rpcTopK,
-      }
-    );
+    const { data: matches, error: matchError } = await supabase.rpc("match_agents", {
+      query_embedding: queryEmbedding,
+      match_threshold: rpcMatchThreshold,
+      match_count: rpcTopK,
+    });
+    console.log("[search] match_agents response", {
+      matchError,
+      matchCount: matches?.length,
+      sample: matches?.slice?.(0, 3),
+    });
 
     if (matchError) {
       return NextResponse.json(
@@ -234,25 +242,93 @@ export async function POST(request: Request) {
     }
 
     const matchRows: MatchRow[] = matches ?? [];
-    const matchedIds = matchRows.map((row) => row.agent_id);
+    let matchedIds = matchRows.map((row) => row.agent_id);
+    console.log("[search] matched ids", matchedIds);
+
+    // Fallback: if no vector matches, relax threshold to 0 to still surface closest agents.
+    if (!matchedIds.length) {
+      console.log("[search] no matches at threshold; retrying with threshold 0");
+      const { data: relaxedData, error: relaxedError } = await supabase.rpc("match_agents", {
+        query_embedding: queryEmbedding,
+        match_threshold: 0,
+        match_count: rpcTopK,
+      });
+      const relaxedMatches: MatchRow[] = Array.isArray(relaxedData) ? relaxedData : [];
+      console.log("[search] relaxed match_agents response", {
+        relaxedError,
+        relaxedCount: relaxedMatches?.length,
+        sample: relaxedMatches?.slice?.(0, 3),
+      });
+      if (!relaxedError && relaxedMatches?.length) {
+        matchRows.splice(0, matchRows.length, ...relaxedMatches);
+        matchedIds = relaxedMatches.map((row: MatchRow) => row.agent_id);
+        console.log("[search] matched ids after relax", matchedIds);
+      }
+    }
 
     if (!matchedIds.length) {
-      // No matches: ask GPT to give fallback suggestions.
-      const fallback = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          { role: "system", content: fallbackPrompt },
-          { role: "user", content: query },
-        ],
+      console.log("[search] still no matches; falling back to metadata search");
+      const { data: metaAgents, error: metaError } = await supabase
+        .from("agents")
+        .select(
+          "id, name, author, description, category, url, pricing_model, price, rating_avg, rating_count, test_score",
+        )
+        .or(
+          [
+            `name.ilike.%${query}%`,
+            `description.ilike.%${query}%`,
+            `category.ilike.%${query}%`,
+          ].join(","),
+        )
+        .limit(rpcTopK);
+
+      console.log("[search] metadata search", {
+        metaError,
+        metaCount: metaAgents?.length,
+        ids: metaAgents?.map?.((a: AgentRow) => a.id),
       });
+
+      if (metaError) {
+        return NextResponse.json(
+          { ok: false, error: `meta agent fetch failed: ${metaError.message}` },
+          { status: 500 },
+        );
+      }
+
+      if (!metaAgents?.length) {
+        // No matches: ask GPT to give fallback suggestions.
+        const fallback = await openai.chat.completions.create({
+          model: "gpt-4.1",
+          messages: [
+            { role: "system", content: fallbackPrompt },
+            { role: "user", content: query },
+          ],
+        });
+
+        return NextResponse.json({
+          ok: true,
+          mode: "chat",
+          message:
+            fallback.choices[0]?.message?.content ??
+            "No suitable agent found. Try rephrasing your request.",
+          results: [],
+        });
+      }
+
+      // Use metadata results as the candidate pool with similarity 0; fitness will still consider ratings/price.
+      const metaCombined = metaAgents.map((agent: AgentRow, idx: number) => ({
+        ...agent,
+        similarity: 0,
+        fitness_score: 0,
+        rank: idx + 1,
+        rationale: buildRationale(agent, 0, 0),
+      }));
 
       return NextResponse.json({
         ok: true,
-        mode: "chat",
-        message:
-          fallback.choices[0]?.message?.content ??
-          "No suitable agent found. Try rephrasing your request.",
-        results: [],
+        mode: "agents",
+        message: "Results found via metadata search (no embedding match).",
+        results: metaCombined,
       });
     }
 
@@ -262,15 +338,16 @@ export async function POST(request: Request) {
         "id, name, author, description, category, url, pricing_model, price, rating_avg, rating_count, test_score"
       )
       .in("id", matchedIds);
-
-    if (rpcCategory) {
-      agentQuery = agentQuery.eq("category", rpcCategory);
-    }
     if (rpcPriceMax != null) {
       agentQuery = agentQuery.lte("price", rpcPriceMax);
     }
 
     const { data: agents, error: agentError } = await agentQuery;
+    console.log("[search] agents fetch", {
+      agentError,
+      agentCount: agents?.length,
+      ids: agents?.map?.((a: AgentRow) => a.id),
+    });
     if (agentError) {
       return NextResponse.json(
         { ok: false, error: `agent fetch failed: ${agentError.message}` },
@@ -331,8 +408,12 @@ export async function POST(request: Request) {
           content: `Tell the user why you recommended the following agent based on the numbers in ${explanation}`,
         },
       ],
+  })
+    console.log("[search] explanation built", {
+      explanation,
+      aiSummary: AIexplanation.choices[0].message.content,
     });
-
+    
     const summaryMessage = `${AIexplanation.choices[0].message.content}`;
 
     return NextResponse.json({
