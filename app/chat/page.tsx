@@ -780,6 +780,8 @@ function PromptComposer({
           value={prompt}
           onChange={(e) => handleChange(e.target.value, e.target)}
           onKeyDown={(e) => {
+            // Avoid sending while IME composition is active (e.g., Korean input)
+            if (e.nativeEvent.isComposing) return;
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               onSend();
