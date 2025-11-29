@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useHeaderVisibility } from "@/components/app-frame";
 import { cn } from "@/lib/utils";
 import { type Agent } from "@/lib/agents";
+import { createClient } from "@/lib/supabase/client";
 import {
   Bot,
   Feather,
@@ -313,6 +314,9 @@ export default function ChatPage({ user }: { user: ChatUser }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [agentModal, setAgentModal] = useState<Agent | null>(null);
   const [searchResults, setSearchResults] = useState<Agent[]>([]);
+  const [catalogAgents, setCatalogAgents] = useState<Agent[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [executing, setExecuting] = useState(false);
@@ -323,7 +327,59 @@ export default function ChatPage({ user }: { user: ChatUser }) {
     null
   );
 
+  useEffect(() => {
+    const loadCatalogAgents = async () => {
+      setCatalogLoading(true);
+      setCatalogError(null);
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("agents")
+          .select(
+            "id, name, author, description, category, price, rating_avg, rating_count, test_score, pricing_model, url"
+          );
+
+        if (error) throw new Error(error.message);
+
+        const sorted =
+          data?.sort((a, b) => {
+            const aRating =
+              (a.rating_avg ?? 0) + (a.rating_count ?? 0) * 0.001;
+            const bRating =
+              (b.rating_avg ?? 0) + (b.rating_count ?? 0) * 0.001;
+            if (bRating === aRating) {
+              return (a.price ?? 0) - (b.price ?? 0);
+            }
+            return bRating - aRating;
+          }) ?? [];
+
+        setCatalogAgents(
+          sorted.map((agent, index) => ({
+            ...agent,
+            author: agent.author ?? "Unknown",
+            price: agent.price ?? 0,
+            rank: index + 1,
+            rating: agent.rating_avg ?? undefined,
+          }))
+        );
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to load agents";
+        setCatalogError(message);
+      } finally {
+        setCatalogLoading(false);
+      }
+    };
+
+    void loadCatalogAgents();
+  }, []);
+
   const hasSearchResults = searchResults.length > 0;
+
+  const landingAgents = useMemo(() => {
+    if (selectedCategory === "all") return catalogAgents;
+    return catalogAgents.filter((agent) => agent.category === selectedCategory);
+  }, [catalogAgents, selectedCategory]);
 
   const recommendedAgents = useMemo(() => {
     if (!searchResults.length) return [];
@@ -925,7 +981,9 @@ export default function ChatPage({ user }: { user: ChatUser }) {
             onSend={handleSend}
             selectedCategory={selectedCategory}
             onCategoryChange={setSelectedCategory}
-            recommendedAgents={recommendedAgents}
+            recommendedAgents={landingAgents}
+            loading={catalogLoading}
+            error={catalogError}
             onOpenAgent={(agent) => setAgentModal(agent)}
           />
         ) : (
@@ -980,6 +1038,8 @@ function LandingView({
   selectedCategory,
   onCategoryChange,
   recommendedAgents,
+  loading,
+  error,
   onOpenAgent,
 }: {
   prompt: string;
@@ -988,6 +1048,8 @@ function LandingView({
   selectedCategory: string;
   onCategoryChange: (value: string) => void;
   recommendedAgents: Agent[];
+  loading?: boolean;
+  error?: string | null;
   onOpenAgent: (agent: Agent) => void;
 }) {
   const categoriesUI: {
@@ -996,6 +1058,12 @@ function LandingView({
     icon: React.ReactNode;
     tint: string;
   }[] = [
+    {
+      id: "all",
+      label: "All",
+      icon: <Grid className="h-5 w-5" />,
+      tint: "bg-gray-100 text-gray-600",
+    },
     {
       id: "scraper",
       label: "Scraper",
@@ -1068,7 +1136,15 @@ function LandingView({
           Recommendation
           <span className="h-px w-16 bg-gradient-to-r from-transparent via-gray-300 to-transparent" />
         </div>
-        {recommendedAgents.length ? (
+        {loading ? (
+          <p className="text-sm text-gray-500 text-center pt-10">
+            Loading agents...
+          </p>
+        ) : error ? (
+          <p className="text-sm text-red-600 text-center pt-10">
+            Failed to load agents: {error}
+          </p>
+        ) : recommendedAgents.length ? (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4 pt-10">
             {recommendedAgents.slice(0, 4).map((agent, index) => (
               <AgentCard
