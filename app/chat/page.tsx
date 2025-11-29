@@ -6,8 +6,7 @@ import { AgentCard } from "@/components/agent-card";
 import { Button } from "@/components/ui/button";
 import { useHeaderVisibility } from "@/components/app-frame";
 import { cn } from "@/lib/utils";
-import { categories, type Agent } from "@/lib/agents";
-import { createClient } from "@/lib/supabase/client";
+import { type Agent } from "@/lib/agents";
 import {
   Bot,
   Feather,
@@ -237,72 +236,25 @@ export default function ChatPage({ user }: { user: any }) {
   const [searchResults, setSearchResults] = useState<Agent[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [hasRecommendedAgent, setHasRecommendedAgent] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [lastQuery, setLastQuery] = useState("");
   const [agentExecuted, setAgentExecuted] = useState(false);
-
-  const [allAgents, setAllAgents] = useState<Agent[]>([]);
 
   const [finalQueryMode, setFinalQueryMode] = useState(false);
   const [finalQueryAgentId, setFinalQueryAgentId] = useState<string | null>(
     null
   );
 
-  useEffect(() => {
-    const loadAgents = async () => {
-      try {
-        const supabase = createClient();
-        const { data, error } = await supabase
-          .from("agents")
-          .select(
-            "id, name, author, description, category, price, rating_avg, rating_count, test_score, pricing_model, url"
-          );
-
-        if (error) throw new Error(error.message);
-
-        const sorted =
-          data?.sort((a, b) => {
-            const aRating = (a.rating_avg ?? 0) + (a.rating_count ?? 0) * 0.001;
-            const bRating = (b.rating_avg ?? 0) + (b.rating_count ?? 0) * 0.001;
-            if (bRating === aRating) {
-              return (a.price ?? 0) - (b.price ?? 0);
-            }
-            return bRating - aRating;
-          }) ?? [];
-
-        setAllAgents(
-          sorted.map((agent, index) => ({
-            ...agent,
-            rank: index + 1,
-            rating: agent.rating_avg ?? undefined,
-          }))
-        );
-      } catch (err) {
-        console.error("Failed to load agents for chat:", err);
-      }
-    };
-
-    void loadAgents();
-  }, []);
-
   const hasSearchResults = searchResults.length > 0;
 
   const recommendedAgents = useMemo(() => {
-    const baseList = hasSearchResults ? searchResults : allAgents;
+    if (!searchResults.length) return [];
 
-    const filtered =
-      !selectedCategory || selectedCategory === "all"
-        ? baseList
-        : baseList.filter((agent) => agent.category === selectedCategory);
-
-    if (!filtered.length) return [];
-
-    return filtered.map((agent, index) => ({
+    return searchResults.map((agent, index) => ({
       ...agent,
       rank: agent.rank ?? index + 1,
     }));
-  }, [hasSearchResults, searchResults, allAgents, selectedCategory]);
+  }, [searchResults]);
 
   const updateExecutionMessage = (
     executionId: string,
@@ -393,6 +345,7 @@ export default function ChatPage({ user }: { user: any }) {
   const runSearch = async (queryText: string) => {
     setSearching(true);
     setSearchError(null);
+    setSearchResults([]);
 
     try {
       const response = await fetch("/api/search", {
@@ -464,10 +417,6 @@ export default function ChatPage({ user }: { user: any }) {
       }));
 
       setSearchResults(results);
-
-      if (results.length > 0) {
-        setHasRecommendedAgent(true);
-      }
 
       if (results.length) {
         const firstForCategory =
@@ -944,7 +893,6 @@ export default function ChatPage({ user }: { user: any }) {
           onClose={() => setAgentModal(null)}
           onUseAgent={() => {
             setSelectedAgentId(agentModal.id);
-            setHasRecommendedAgent(true);
             setAgentExecuted(false);
             setAgentModal(null);
             setView("chat");
@@ -1257,10 +1205,10 @@ function ChatView({
 
       <aside
         className={cn(
-          "flex max-h-full flex-col overflow-hidden rounded-3xl bg-gray-50 p-5 shadow-sm transition-all duration-300",
+          "flex max-h-full flex-col overflow-hidden rounded-3xl bg-gray-50 shadow-sm transition-all duration-300 transform-gpu",
           hasRecommended
-            ? "flex-[1] translate-x-0 opacity-100"
-            : "pointer-events-none w-0 -translate-x-6 opacity-0"
+            ? "flex-[1] max-w-sm translate-x-0 opacity-100 p-5"
+            : "pointer-events-none max-w-0 translate-x-[120%] opacity-0 p-0"
         )}
       >
         <div className="mb-4 flex items-center justify-between">
