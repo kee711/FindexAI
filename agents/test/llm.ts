@@ -2,8 +2,12 @@ import { ChatOpenAI } from "@langchain/openai";
 import type { AgentInfo } from "./types.ts";
 
 export const llm = new ChatOpenAI({
-  model: "gpt-4.1",
+  model: "qwen3-30b-a3b-instruct-2507",
   temperature: 0,
+  apiKey: process.env.FLOCK_API_KEY,
+  configuration: {
+    baseURL: "https://api.flock.io/v1",
+  },
 });
 
 // sanitizer.ts 같은 파일로 빼도 되고, 아래에 같이 둬도 됩니다.

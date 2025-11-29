@@ -6,8 +6,12 @@ import { ChatOpenAI } from "@langchain/openai";
 // export const runtime = "nodejs";
 
 const model = new ChatOpenAI({
-  model: "gpt-4.1-mini", // 원하는 모델명으로 변경
+  model: "qwen3-30b-a3b-instruct-2507",
   temperature: 0.3,
+  apiKey: process.env.FLOCK_API_KEY,
+  configuration: {
+    baseURL: "https://api.flock.io/v1",
+  },
 });
 
 /**
@@ -87,20 +91,45 @@ ${rawResult}
 
     let content: string;
 
-    if (typeof aiMessage.content === "string") {
-      content = aiMessage.content;
-    } else {
+    const messageContent = aiMessage.content;
+    if (typeof messageContent === "string") {
+      content = messageContent;
+    } else if (Array.isArray(messageContent)) {
       // ChatOpenAI v0.2에서 content가 array인 경우
-      content = aiMessage.content
-        .map((c: any) => (typeof c === "string" ? c : c.text ?? ""))
+      content = messageContent
+        .map((part) => {
+          if (typeof part === "string") return part;
+          if (
+            part &&
+            typeof part === "object" &&
+            "text" in part &&
+            typeof (part as { text?: unknown }).text === "string"
+          ) {
+            return (part as { text?: string }).text ?? "";
+          }
+          return "";
+        })
         .join("\n");
+    } else {
+      content = "";
     }
 
     let formatted = rawResult;
     let summary = `Execution completed for ${agentName}.`;
 
+    const stripCodeFence = (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed.startsWith("```")) return trimmed;
+      const withoutFence = trimmed.replace(/^```[a-zA-Z0-9_-]*\n?/, "");
+      const closingIndex = withoutFence.lastIndexOf("```");
+      return closingIndex >= 0
+        ? withoutFence.slice(0, closingIndex).trim()
+        : withoutFence.trim();
+    };
+
     try {
-      const parsed = JSON.parse(content);
+      const cleaned = stripCodeFence(content);
+      const parsed = JSON.parse(cleaned);
       if (typeof parsed.formatted === "string") {
         formatted = parsed.formatted;
       }
@@ -122,12 +151,13 @@ ${rawResult}
       },
       { status: 200 }
     );
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("[format-execution] error:", e);
     return NextResponse.json(
       {
         ok: false,
-        error: e?.message ?? "Failed to format execution result",
+        error:
+          e instanceof Error ? e.message : "Failed to format execution result",
       },
       { status: 500 }
     );

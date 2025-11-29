@@ -1,6 +1,5 @@
 "use client";
-
-import ReactMarkdown from "react-markdown";
+/* eslint-disable @next/next/no-img-element */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AgentCard } from "@/components/agent-card";
 import { Button } from "@/components/ui/button";
@@ -65,6 +64,7 @@ type ExecutionMessage = {
 };
 
 type ChatMessage = TextMessage | ExecutionMessage;
+type ChatUser = { name?: string | null };
 
 // 🔹 X-402 Direct Payment 요구사항 타입 (서버와 동일 형태)
 type DirectAcceptOption = {
@@ -77,7 +77,7 @@ type DirectAcceptOption = {
   payTo: string;
   value: string;
   description?: string;
-  extra?: Record<string, any>;
+  extra?: Record<string, unknown>;
 };
 
 type DirectPaymentRequirements = {
@@ -92,25 +92,79 @@ function parseExecutionResult(
   let resultText = rawText;
   let summaryText = `Execution completed for ${fallbackAgentName}.`;
 
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+
+  const stripCodeFence = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("```")) return trimmed;
+    const withoutFence = trimmed.replace(/^```[a-zA-Z0-9_-]*\n?/, "");
+    const closingIndex = withoutFence.lastIndexOf("```");
+    return closingIndex >= 0
+      ? withoutFence.slice(0, closingIndex).trim()
+      : withoutFence.trim();
+  };
+
+  const parseMaybeJson = (text: string): unknown => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  };
+
+  const cleanedText = stripCodeFence(rawText);
+
+  // Handle stringified JSON string (e.g., "\"{\\\"formatted\\\":...}\"")
+  const firstParse = parseMaybeJson(cleanedText);
+  const parsed =
+    typeof firstParse === "string"
+      ? parseMaybeJson(firstParse) ?? firstParse
+      : firstParse ?? cleanedText;
+
   try {
-    const parsed = JSON.parse(rawText);
+    const parsedObj =
+      typeof parsed === "string" ? parseMaybeJson(parsed) ?? parsed : parsed;
+    const parsedRecord = isRecord(parsedObj) ? parsedObj : null;
+    const resultRecord = isRecord(parsedRecord?.result)
+      ? (parsedRecord?.result as Record<string, unknown>)
+      : null;
+
+    const pickString = (
+      obj: Record<string, unknown> | null,
+      key: string
+    ): string | undefined => {
+      if (!obj) return undefined;
+      const value = obj[key];
+      return typeof value === "string" ? value : undefined;
+    };
+
+    // Prefer explicitly formatted markdown if present.
+    const formatted =
+      pickString(parsedRecord, "formatted") ??
+      pickString(resultRecord, "formatted");
+    if (typeof formatted === "string" && formatted.trim().length > 0) {
+      resultText = formatted;
+    }
 
     const resultOutput =
-      parsed?.result?.output ??
-      parsed?.output ??
-      parsed?.body ??
-      parsed?.result ??
-      parsed;
+      resultRecord?.["output"] ??
+      parsedRecord?.["output"] ??
+      parsedRecord?.["body"] ??
+      parsedRecord?.["result"] ??
+      parsedObj;
 
     const summary =
-      parsed?.result?.summary ??
-      parsed?.summary ??
+      pickString(resultRecord, "summary") ??
+      pickString(parsedRecord, "summary") ??
       `Execution triggered for ${fallbackAgentName}.`;
 
-    resultText =
-      typeof resultOutput === "string"
-        ? resultOutput
-        : JSON.stringify(resultOutput, null, 2);
+    if (!formatted) {
+      resultText =
+        typeof resultOutput === "string"
+          ? resultOutput
+          : JSON.stringify(resultOutput, null, 2);
+    }
     summaryText = summary;
   } catch {}
 
@@ -121,12 +175,18 @@ function sanitizeRawResultForLlm(rawText: string): {
   sanitizedText: string;
   images: ExecutionImage[];
 } {
-  let images: ExecutionImage[] = [];
+  const images: ExecutionImage[] = [];
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
 
   try {
     const parsed = JSON.parse(rawText);
 
-    if (parsed.imageBase64?.imageBase64) {
+    if (
+      isRecord(parsed) &&
+      isRecord(parsed.imageBase64) &&
+      typeof parsed.imageBase64.imageBase64 === "string"
+    ) {
       images.push({
         type: "base64",
         src: parsed.imageBase64.imageBase64,
@@ -136,25 +196,44 @@ function sanitizeRawResultForLlm(rawText: string): {
       delete parsed.imageBase64;
     }
 
-    if (Array.isArray(parsed.results)) {
-      parsed.results = parsed.results.map((r: any, idx: number) => {
-        const copy = { ...r };
+    if (isRecord(parsed) && Array.isArray(parsed.results)) {
+      parsed.results = parsed.results.map((r, idx: number) => {
+        if (!isRecord(r)) return r;
+        const copy: Record<string, unknown> = { ...r };
 
-        if (copy.imageBase64?.imageBase64) {
+        const nestedImageBase64 = isRecord(copy.imageBase64)
+          ? copy.imageBase64
+          : null;
+        if (
+          nestedImageBase64 &&
+          typeof nestedImageBase64.imageBase64 === "string"
+        ) {
           images.push({
             type: "base64",
-            src: copy.imageBase64.imageBase64,
+            src: nestedImageBase64.imageBase64,
             mimeType: "image/png",
-            alt: copy.title ?? `Result image #${idx + 1}`,
+            alt:
+              typeof copy.title === "string"
+                ? copy.title
+                : `Result image #${idx + 1}`,
           });
           delete copy.imageBase64;
         }
 
-        if (copy.imageUrl || copy.image_url) {
+        const imageUrl =
+          typeof copy.imageUrl === "string"
+            ? copy.imageUrl
+            : typeof copy.image_url === "string"
+            ? copy.image_url
+            : null;
+        if (imageUrl) {
           images.push({
             type: "url",
-            src: copy.imageUrl ?? copy.image_url,
-            alt: copy.title ?? `Result image #${idx + 1}`,
+            src: imageUrl,
+            alt:
+              typeof copy.title === "string"
+                ? copy.title
+                : `Result image #${idx + 1}`,
           });
         }
 
@@ -225,7 +304,7 @@ async function formatWithLlm(
   }
 }
 
-export default function ChatPage({ user }: { user: any }) {
+export default function ChatPage({ user }: { user: ChatUser }) {
   const { setShowHeader } = useHeaderVisibility();
   const [view, setView] = useState<"landing" | "chat">("landing");
   const [prompt, setPrompt] = useState("");
@@ -237,7 +316,6 @@ export default function ChatPage({ user }: { user: any }) {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [executing, setExecuting] = useState(false);
-  const [lastQuery, setLastQuery] = useState("");
   const [agentExecuted, setAgentExecuted] = useState(false);
 
   const [finalQueryMode, setFinalQueryMode] = useState(false);
@@ -312,7 +390,6 @@ export default function ChatPage({ user }: { user: any }) {
 
       setPrompt("");
       setFinalQueryMode(false);
-      setLastQuery(cleanedQuery);
       setView("chat");
 
       await executeAgent(cleanedQuery, finalQueryAgentId);
@@ -337,7 +414,6 @@ export default function ChatPage({ user }: { user: any }) {
 
     setView("chat");
     setPrompt("");
-    setLastQuery(text);
 
     await runSearch(text);
   };
@@ -492,8 +568,6 @@ export default function ChatPage({ user }: { user: any }) {
 
     const cleanedQuery = finalQuery.trim();
     if (!cleanedQuery) return;
-
-    const now = Date.now();
 
     setAgentExecuted(false);
     setExecuting(true);
@@ -666,8 +740,6 @@ export default function ChatPage({ user }: { user: any }) {
         functionName: "transfer",
         args: [payTo, valueUnits],
       });
-
-      const explorerUrl = `https://sepolia.basescan.org/tx/${txHash}`;
 
       setMessages((prev) => [
         ...prev,
@@ -862,11 +934,9 @@ export default function ChatPage({ user }: { user: any }) {
             onPromptChange={setPrompt}
             onSend={handleSend}
             messages={messages}
-            selectedCategory={selectedCategory}
             recommendedAgents={recommendedAgents}
             selectedAgent={primaryAgent}
             onOpenAgent={(agent) => setAgentModal(agent)}
-            onSelectAgent={handleSelectAgent}
             onConfirm={handleConfirmClick}
             searching={searching}
             searchError={searchError}
@@ -1025,7 +1095,6 @@ function ChatView({
   onPromptChange,
   onSend,
   messages,
-  selectedCategory,
   recommendedAgents,
   selectedAgent,
   onOpenAgent,
@@ -1038,13 +1107,11 @@ function ChatView({
   onReviewChangeExecution,
   onSubmitReview,
   user,
-  onSelectAgent,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
   onSend: () => void | Promise<void>;
   messages: ChatMessage[];
-  selectedCategory: string;
   recommendedAgents: Agent[];
   selectedAgent: Agent | undefined;
   onOpenAgent: (agent: Agent) => void;
@@ -1056,8 +1123,7 @@ function ChatView({
   onRateExecution: (executionId: string, value: number) => void;
   onReviewChangeExecution: (executionId: string, value: string) => void;
   onSubmitReview: (executionId: string) => void;
-  user: any;
-  onSelectAgent: (agent: Agent) => void;
+  user: ChatUser;
 }) {
   const hasRecommended = recommendedAgents.length > 0;
 

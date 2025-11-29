@@ -124,18 +124,21 @@ export async function POST(request: Request) {
       priceAnchor,
     });
 
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.FLOCK_API_KEY) {
       return NextResponse.json(
-        { ok: false, error: "OPENAI_API_KEY is not set" },
+        { ok: false, error: "FLOCK_API_KEY is not set" },
         { status: 500 }
       );
     }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    console.log("[search] calling OpenAI for tool decision");
+    const openai = new OpenAI({
+      apiKey: process.env.FLOCK_API_KEY,
+      baseURL: "https://api.flock.io/v1",
+    });
+    console.log("[search] calling Flock for tool decision");
 
     const toolCallDecision = await openai.chat.completions.create({
-      model: "gpt-4.1",
+      model: "qwen3-30b-a3b-instruct-2507",
       messages: [
         { role: "system", content: systemPrompt },
         {
@@ -329,7 +332,7 @@ export async function POST(request: Request) {
       if (!metaAgents?.length) {
         // No matches: ask GPT to give fallback suggestions.
         const fallback = await openai.chat.completions.create({
-          model: "gpt-4.1",
+          model: "qwen3-30b-a3b-instruct-2507",
           messages: [
             { role: "system", content: fallbackPrompt },
             { role: "user", content: query },
@@ -434,7 +437,7 @@ export async function POST(request: Request) {
       .join("\n");
 
     const AIexplanation = await openai.chat.completions.create({
-      model: "gpt-4.1",
+      model: "qwen3-30b-a3b-instruct-2507",
       messages: [
         { role: "system", content: systemPrompt },
         {
